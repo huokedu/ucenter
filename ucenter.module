@@ -1,0 +1,312 @@
+<?php
+/**
+ * Implementation of hook_user().
+ */
+function ucenter_user($op, &$edit, &$account, $category = NULL) {
+  global $user;
+
+  switch ($op) {
+  case 'delete':
+    require_once dirname(__FILE__).'/ucenter.inc';
+    require_once dirname(__FILE__).'/config.inc.php';
+    require_once dirname(__FILE__).'/uc_client/client.php';
+    // 下面的4代碼是防止，ucenter刪除drupal的用戶數據時，重復發ucenter報告。
+    $ucenter_user = ucenter_load($account->uid);      
+    if (!$ucenter_user){
+      break;
+    }
+
+    @$re = uc_user_delete($ucenter_user->ucenter_uid);  
+    if ($re == 0) {
+        drupal_set_message('己把用户从drupal中删除，但因为ucenter保护这个用户，所以没有在ucenter中把这个用户删了。','warning');
+    }
+    ucenter_delete($ucenter_user->drupal_uid);
+    watchdog('user', 'Ucenter: Delete UCENTER user ( %username ). Return code : %re ', array('%username' => $account->name, '%re' => $re, ) );
+    break;
+
+  case 'insert':
+    require_once dirname(__FILE__).'/ucenter.inc';
+    require_once dirname(__FILE__).'/config.inc.php';
+    require_once dirname(__FILE__).'/uc_client/client.php';
+
+    @$re = uc_user_register($edit['name'], $edit['pass'], $account->mail); 
+    if ($re > 0){
+      ucenter_save('',array('drupal_uid' => $account->uid, 'ucenter_uid' => (int) $re, 'drupal_actived' => 1,));
+      drupal_set_message('用户成功在drupal中加入，也成功在ucenter中注册。','status');
+      watchdog('user', 'Ucenter: Register user (%name) successful in UCENTER.', array('%name' => $edit['name'], ) );
+    }
+    else{
+      drupal_set_message('用户成功在drupal中加入，但在ucenter中注册失败。','error');
+      watchdog('user', 'Ucenter: Register user (%name) failed in UCENTER. Return code:%re ', array('%name' => $edit['name'],'%re' => $re, ), WATCHDOG_WARNING );
+    }
+    break;
+
+  case 'login':
+    require_once dirname(__FILE__).'/ucenter.inc';
+    require_once dirname(__FILE__).'/config.inc.php';
+    require_once dirname(__FILE__).'/uc_client/client.php';
+    // 下面的4代碼是防止，ucenter要求drupal登陸時，重復向ucenter報告。
+    $ucenter_user = ucenter_load($account->uid);
+    if (!$ucenter_user){
+      break;
+    }
+
+    @list($ucenter_uid, $ucenter_username, $ucenter_password, $ucenter_email) = uc_user_login($edit['name'], $edit['pass'],0);
+    if ($ucenter_uid > 0){ 
+      ucenter_save($ucenter_user,array('drupal_actived' => 1,));
+
+      @$ucsyninfo = uc_user_synlogin($ucenter_uid);
+      $ucname = 'UC'.session_id();
+      $_SESSION[$ucname] = $ucsyninfo;
+      watchdog('user', 'Ucenter: User (%name) login successful in UCENTER. ', array('%name' =>$edit['name'], )); 
+    }
+    else{
+      watchdog('user', 'Ucenter: User (%name) login failed in UCENTER. Return code:%re ', array('%name' => $edit['name'],'%re' => $ucenter_uid, ), WATCHDOG_WARNING );
+    }
+    break;
+
+  case 'logout':
+    require_once dirname(__FILE__).'/ucenter.inc';
+    require_once dirname(__FILE__).'/config.inc.php';
+    require_once dirname(__FILE__).'/uc_client/client.php';
+    // 下面的4代碼是防止，ucenter要求drupal登出時，重復發ucenter報告。
+    $ucenter_user = ucenter_load($account->uid);      
+    if (!$ucenter_user){
+      break;
+    }
+    $ucsyninfo = uc_user_synlogout();
+     $action = t('退出');
+      $content = t('您已经退出') . ' ' . $edit['name'] . '<br />' . t('页面会在5秒钟后转到首页，如果页面没有跳转，请点击下面链接') . '<br />' . l(t('回到首页'), $base_url) ;
+      print theme('welcome_page', $action, $ucsyninfo,$content);    
+    break;
+
+
+
+  case 'update':
+    require_once dirname(__FILE__).'/ucenter.inc';
+    require_once dirname(__FILE__).'/config.inc.php';
+    require_once dirname(__FILE__).'/uc_client/client.php';
+// 下面的4代碼是防止，ucenter通知drupal更新用戶數據時，重復向ucenter報告。
+    $ucenter_user = ucenter_load($account->uid);      
+    if (!$ucenter_user){
+      break;
+    }
+
+    if ($account->name != $edit['name']  && user_access('administer site configuration', $user) ) {       
+      //ucenter not support change user name by uc_client.
+      drupal_set_message(t('Ucenter not support change user name by uc_client. You need to login Ucenter and change user name.'));
+    }
+
+    @$re = uc_user_edit($account->name, '', empty($edit['pass'])?'':$edit['pass'], $edit['mail'], 1); 
+    if ($re == 1){
+      watchdog('user', 'Ucenter: Update user (%name) successful in UCENTER. ', array('%name' => $edit['name'], ));
+    }
+    else{
+      watchdog('user', 'Ucenter: Update user (%name) failed in UCENTER. Return code:%re', array('%name' => $edit['name'], '%re' => $re ), WATCHDOG_WARNING );
+    }
+
+    break;
+
+  default:
+    break;
+  }
+
+}
+
+
+
+/**
+ * Implementation of hook_form_alter.
+ */
+function ucenter_form_alter(&$form, $form_state, $form_id) {
+
+  if ($form_id == 'user_login_block' || $form_id == 'user_login') { //user login
+    array_unshift($form['#validate'], 'ucenter_user_login_validate');
+  } 
+  elseif ($form_id == 'user_register') {  //user register
+    $form['#validate'][] = 'ucenter_user_register_validate';
+  }
+  elseif ($form_id == 'user_profile_form') { //user edit
+    $form['#validate'][] = 'ucenter_user_profile_form_validate';
+  }
+
+}
+
+
+
+
+/**
+ * * user_login_validate
+ * * validate user by Ucenter ,if success ,update password in drupal. 
+ * * @return void
+ *   为ucenter中的用户为依据，不存在ucenter中的用户但在应用中的用户将视为不存在。
+ *   初次登陆，自动依据用户名激活帐号，在用户表和关系表中插入对应的的信息。
+ *   正常登陆，从ucenter中验证，成功则更新关系表和用表中的信息（用ucenter返回的信息）。
+ *   对于关系表安装不成功的处理方法，自行处理。如果关系表中不存在相关记录，则视为初次登陆
+ *   自动激活帐号
+ * **/
+function ucenter_user_login_validate ($form, &$form_state) {
+  global $user;  
+    require_once dirname(__FILE__).'/ucenter.inc';
+    require_once dirname(__FILE__).'/config.inc.php';
+    require_once dirname(__FILE__).'/uc_client/client.php';
+  @list($ucenter_uid, $ucenter_name, $ucenter_pass, $ucenter_mail) = uc_user_login($form_state['values']['name'], $form_state['values']['pass']);
+  if ($ucenter_uid > 0) {
+    $account= user_load(array('name' => $ucenter_name, ));
+    $ucenter_user = ucenter_load(array('ucenter_uid' => (int) $ucenter_uid,));
+    if (!$account) {
+      $userinfo = array(
+        'name' => $ucenter_name, 
+        'mail' => $ucenter_mail,
+        'init' => $ucenter_name, 
+        'status' => 1, 
+        "authname_ucenter" => $ucenter_name, 
+        'access' => time(),
+      );
+      $account = user_save('', $userinfo);      
+    }
+    else {
+        // ucenter_user表不存在相关的情况处理,可能原因有二：1.数据表安装不成功;2.数据库不存在相关记录
+      if (!$ucenter_user){
+        watchdog('user', 'Ucenter: 用戶名 (%name)  , 不在drupal與ucenterr的關系表中,将自动为其插入关系表中。', array('%name' => $ucenter_name));
+      }
+    }
+
+    //    user_external_login_register($ucenter_name, 'ucenter');
+
+    if (!$ucenter_user) {
+      ucenter_save('',array('drupal_uid' => $account->uid, 'ucenter_uid' => (int) $ucenter_uid, 'drupal_actived' => 1,));
+    }
+    else{
+      ucenter_save($ucenter_user,array('drupal_actived' => 1,));
+    }
+
+    if (!db_query(" UPDATE {users} SET pass=md5('%s'), mail='%s' WHERE name='%s'  ", $ucenter_pass, $ucenter_mail, $ucenter_name )) {
+      return FALSE;
+    }
+  }
+  else {
+    form_set_error('name', t('抱歉，未识别的用户名或密码 <a href="@password">你是不是忘记密码了?</a>', array('@password' => url('user/password'))));
+    watchdog('user', 'Ucenter: User (%name) login failed in UCENTER. Return code:%re ', array('%name' => $form_state['values']['name'],'%re' => $ucenter_uid, ) );
+  }
+
+}
+
+
+
+/**
+ * * Validate user name and mail by Ucenter 
+ * *
+ * * @return void
+ * **/
+function ucenter_user_register_validate ($form, &$form_state) {
+    require_once dirname(__FILE__).'/ucenter.inc';
+    require_once dirname(__FILE__).'/config.inc.php';
+    require_once dirname(__FILE__).'/uc_client/client.php';
+  @$name_info = uc_user_checkname($form_state['values']['name']);
+  if ($name_info == -1) {
+    form_set_error('name', t('这个名字 %name 是无效的.', array('%name' => $form_state['values']['name'])));
+  }
+  else if ($name_info == -2) {
+    form_set_error('name', t('这个名字 %name 包含有敏感词.', array('%name' => $form_state['values']['name'])));
+  }
+  else if ($name_info == -3) {
+    form_set_error('name', t('这个名字 %mail 己经被注册了.', array('%name' => $form_state['values']['name'])));
+  }
+
+  @$mail_info = uc_user_checkemail($form_state['values']['mail']);
+  if ($mail_info == -4) {
+    form_set_error('mail', t('这个邮件地址 %mail 是无效的。', array('%mail' => $form_state['values']['mail'])));
+  }
+  else if ($mail_info == -5) {
+    form_set_error('mail', t('这个邮件地址 %mail 不允许被注册。', array('%mail' => $form_state['values']['mail'])));
+  }
+  else if ($mail_info == -6) {
+    form_set_error('mail', t('这个邮件地址 %mail 己经被注册了.', array('%mail' => $form_state['values']['mail'])));
+  }
+
+}
+
+/**
+ * * user_profile_form_validate
+ * *
+ * * @return void
+ * **/
+function ucenter_user_profile_form_validate ($form, &$form_state) {
+    require_once dirname(__FILE__).'/ucenter.inc';
+    require_once dirname(__FILE__).'/config.inc.php';
+    require_once dirname(__FILE__).'/uc_client/client.php';
+  @$re = uc_user_checkemail($form_state['values']['mail']);
+  if ($re == -4) {
+    form_set_error('mail', t('这个邮件地址 %mail 是无效的。', array('%mail' => $form_state['values']['mail'])));
+  }
+  else if ($re == -5) {
+    form_set_error('mail', t('这个邮件地址 %mail 不允许被注册。', array('%mail' => $form_state['values']['mail'])));
+  }
+  else if ($re == -6) {
+    form_set_error('mail', t('这个邮件地址 %mail 己经被注册了.', array('%mail' => $form_state['values']['mail'])));
+  }
+}
+
+
+
+
+/**
+ * Implementation of hook_init(). 
+ * 由于登陆后，drupal内置输出的头部中，包含了直接跳转的代码，无法向其它
+ * 应用发送通知信息，因些只能把通知信息保存在会话中。跳转后，再加载，
+ * 进行通知。
+ * 用于通知其它应用登陆与登出的信息
+ */
+function ucenter_init() {
+      $ucname = 'UC'.session_id();
+  if (isset($_SESSION[$ucname])) {
+      drupal_set_html_head($_SESSION[$ucname]);
+//      drupal_set_message(htmlspecialchars_decode($_SESSION[$ucname]));
+//      drupal_set_message('设置生效');
+//      unset($_SESSION[$ucname]);
+  }
+ /* 
+  else{
+  
+      drupal_set_message('通知沒有設置---');
+  }
+  */
+}
+/*
+ *  这是在用户内核加的代码在user_logout函数的最后面加上下面的代码
+ *  drupal本身的退出会直接跳转，因此也无法输出通知信息。因此，只能将 
+ *  通知信息放在会话里。但又由于原本会话必须消毁，因此把通知放到下一个会话中
+ *  去.在退出的动作中，须重新启动会话，同时，把通知信息放到会话里面去。
+ *  退出生命周期后，sess_write会以匿名用户的形式写到数据库中去。
+ *  会便跳转后取出来。
+ *  注意：匿名用户，id 0,也可以在数据库中维持很多同一id的很多会话。
+ *  
+ * */
+/*
+function uc_logout(){
+    unset($_COOKIE);
+    unset($_SESSION);
+    session_start();
+    static $ucsyninfo;
+    $_COOKIE[session_name()] = session_id();
+    $_SESSION['UC'.session_id()] = $ucsyninfo;
+}
+ */
+
+/**
+ * Implementation of hook_theme()
+ */
+function ucenter_theme() {
+
+  return array(
+    'welcome_page' => array(
+      'arguments' => array(
+        'action' => null, 
+        'ucsyninfo' => null, 
+        'content' => null
+      ),
+      'template' => 'welcome-page',
+    ),
+  );
+}

@@ -1,0 +1,41 @@
+<?php
+/**
+ * Implementation of hook_install().
+ */
+function ucenter_install() {
+  drupal_install_schema('ucenter');
+}
+
+/**
+ * Implementation of hook_uninstall().
+ */
+function ucenter_uninstall() {
+  drupal_uninstall_schema('ucenter');     
+}
+
+
+/**
+ *  hook_schema() 
+ */
+function ucenter_schema() {
+  $schema['ucenter_users'] = array(
+    'fields' => array(
+      'drupal_uid' => array('type' => 'int', 'unsigned' => TRUE, 'not null' => TRUE, 'default' => 0),
+      'ucenter_uid' => array('type' => 'int', 'unsigned' => TRUE, 'not null' => TRUE, 'default' => 0),
+      'drupal_actived' => array('type' => 'int','not null' => TRUE,'default' => 0,'size' => 'tiny',),
+    ),
+    'primary key' => array('drupal_uid'),
+    'unique keys' => array('ucenter_uid' => array('ucenter_uid'),),
+  );
+  return $schema;
+}
+
+
+
+
+
+
+
+
+
+

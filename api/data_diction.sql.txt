@@ -1,0 +1,7 @@
+CREATE TABLE `ucenter_users` (
+  `drupal_uid` int(10) unsigned NOT NULL DEFAULT '0',
+  `ucenter_uid` int(10) unsigned NOT NULL DEFAULT '0',
+  `drupal_actived` tinyint(4) NOT NULL DEFAULT '0',
+  PRIMARY KEY (`drupal_uid`),
+  UNIQUE KEY `ucenter_uid` (`ucenter_uid`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8;
